@@ -17,6 +17,8 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var settingsTransitionProgress: Double = 0
     @StateObject private var playbackManager: SoundPlaybackManager
+    private let topChromePadding: CGFloat = 72
+    private let topChromeBackgroundExtraHeight: CGFloat = 64
 
     init() {
         let thunderVariants = (1...11).map { index in
@@ -88,9 +90,10 @@ struct ContentView: View {
                 }
                 .scrollIndicators(.hidden)
                 .background(.regularMaterial)
-                .safeAreaPadding(.top, 72)
+                .platformTopChromePadding(topChromePadding)
                 .animation(.interactiveSpring(response: 0.55, dampingFraction: 0.82), value: settingsTransitionProgress)
 
+                topChromeBackground
                 topBar
             }
         }
@@ -176,12 +179,16 @@ struct ContentView: View {
         .padding(.top, 16)
         .padding(.bottom, 12)
         .padding(.horizontal, 20)
-        .background(
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea(edges: .top)
-                .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.12), radius: 16, y: 6)
-        )
+    }
+
+    private var topChromeBackground: some View {
+        Rectangle()
+            .fill(.ultraThinMaterial)
+            .frame(height: topChromePadding + topChromeBackgroundExtraHeight)
+            .frame(maxWidth: .infinity)
+            .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.12), radius: 16, y: 6)
+            .ignoresSafeArea(edges: .top)
+            .allowsHitTesting(false)
     }
 
     private func toggleSettingsMode() {
@@ -205,6 +212,19 @@ struct ContentView: View {
         }
     }
 
+}
+
+private extension View {
+    @ViewBuilder
+    func platformTopChromePadding(_ padding: CGFloat) -> some View {
+#if os(macOS)
+        self.safeAreaPadding(.top, padding)
+#else
+        self
+            .ignoresSafeArea(edges: .top)
+            .safeAreaPadding(.top, padding)
+#endif
+    }
 }
 
 /// Individual card showing metadata, controls and sliders for a sound.
@@ -241,7 +261,7 @@ private struct SoundRow: View {
                 )
                 .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.18), radius: 16, y: 8)
         )
-        .scaleEffect(x: 1, y: metrics.cardScale, anchor: .center)
+        .scaleEffect(x: 1, y: metrics.cardScale, anchor: .top)
     }
 
     private func header(metrics: SettingsLayoutMetrics) -> some View {
