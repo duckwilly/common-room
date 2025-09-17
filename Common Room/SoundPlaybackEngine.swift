@@ -19,6 +19,9 @@ final class SoundPlaybackManager: ObservableObject {
     private var players: [AmbientSound.ID: AVAudioPlayer] = [:]
     private var timers: [AmbientSound.ID: Timer] = [:]
     private var lastVariantIndices: [AmbientSound.ID: Int] = [:]
+    private var fadeOutTimers: [AmbientSound.ID: Timer] = [:]
+
+    private let loopFadeDuration: TimeInterval = 1.5
 
     init(sounds: [AmbientSound],
          initialVolumes: [AmbientSound.ID: Float] = [:],
@@ -96,13 +99,24 @@ final class SoundPlaybackManager: ObservableObject {
     private func play(_ sound: AmbientSound) {
         switch sound.playback {
         case let .looping(file):
-            guard let player = loopingPlayer(for: sound, fileName: file) else { return }
-            player.currentTime = 0
-            player.setVolume(effectiveVolume(for: sound), fadeDuration: 0)
+            fadeOutTimers[sound.id]?.invalidate()
+            fadeOutTimers.removeValue(forKey: sound.id)
+
+            if let existing = players[sound.id] {
+                existing.stop()
+            }
+
+            guard let player = makePlayer(for: sound, fileName: file) else { return }
+            player.numberOfLoops = -1
+            player.currentTime = randomStartTime(for: player)
+            player.setVolume(0, fadeDuration: 0)
+            players[sound.id] = player
 
             if player.play() {
                 playingSoundIDs.insert(sound.id)
+                player.setVolume(effectiveVolume(for: sound), fadeDuration: loopFadeDuration)
             } else {
+                players.removeValue(forKey: sound.id)
                 playingSoundIDs.remove(sound.id)
             }
 
@@ -120,25 +134,42 @@ final class SoundPlaybackManager: ObservableObject {
         timers[sound.id]?.invalidate()
         timers.removeValue(forKey: sound.id)
 
-        if let player = players[sound.id] {
-            player.stop()
-            player.currentTime = 0
+        fadeOutTimers[sound.id]?.invalidate()
+        fadeOutTimers.removeValue(forKey: sound.id)
+
+        switch sound.playback {
+        case .looping:
+            guard let player = players[sound.id] else {
+                players.removeValue(forKey: sound.id)
+                playingSoundIDs.remove(sound.id)
+                return
+            }
+
+            playingSoundIDs.remove(sound.id)
+            player.setVolume(0, fadeDuration: loopFadeDuration)
+
+            let timer = Timer(timeInterval: loopFadeDuration, repeats: false) { [weak self, weak player] _ in
+                guard let self else { return }
+                player?.stop()
+                player?.currentTime = 0
+                self.players.removeValue(forKey: sound.id)
+                self.lastVariantIndices.removeValue(forKey: sound.id)
+                self.playingSoundIDs.remove(sound.id)
+                self.fadeOutTimers.removeValue(forKey: sound.id)
+            }
+
+            RunLoop.main.add(timer, forMode: .common)
+            fadeOutTimers[sound.id] = timer
+
+        case .intervalRandom:
+            if let player = players[sound.id] {
+                player.stop()
+                player.currentTime = 0
+            }
+            players.removeValue(forKey: sound.id)
+            lastVariantIndices.removeValue(forKey: sound.id)
+            playingSoundIDs.remove(sound.id)
         }
-
-        players.removeValue(forKey: sound.id)
-        lastVariantIndices.removeValue(forKey: sound.id)
-        playingSoundIDs.remove(sound.id)
-    }
-
-    private func loopingPlayer(for sound: AmbientSound, fileName: String) -> AVAudioPlayer? {
-        if let existing = players[sound.id] {
-            return existing
-        }
-
-        guard let player = makePlayer(for: sound, fileName: fileName) else { return nil }
-        player.numberOfLoops = -1
-        players[sound.id] = player
-        return player
     }
 
     private func applyVolume(_ value: Float, to sound: AmbientSound) {
@@ -252,5 +283,13 @@ final class SoundPlaybackManager: ObservableObject {
             let volume = isMuted ? 0 : (sliderVolumes[id] ?? 1.0)
             player.setVolume(volume, fadeDuration: 0)
         }
+    }
+
+    private func randomStartTime(for player: AVAudioPlayer) -> TimeInterval {
+        let duration = player.duration
+        guard duration.isFinite, duration > 0 else { return 0 }
+        let usableDuration = max(duration - loopFadeDuration, 0)
+        if usableDuration <= 0 { return 0 }
+        return Double.random(in: 0..<usableDuration)
     }
 }
